@@ -1,0 +1,261 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                    KEMA DEV INFRASTRUCTURE ARCHITECTURE                        ║
+║                              AWS ap-south-1                                    ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          AWS ACCOUNT (ap-south-1)                            │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐ │
+│  │  VPC (10.0.0.0/16) - kmea-dev-vpc                                      │ │
+│  │                                                                        │ │
+│  │  ┌──────────────────────────────────────────────────────────────────┐ │ │
+│  │  │  PUBLIC SUBNETS (10.0.0.0/20 + 10.0.16.0/20)                    │ │ │
+│  │  │                                                                 │ │ │
+│  │  │  ┌──────────────────────────────────────────────────────────┐  │ │ │
+│  │  │  │  Internet Gateway                                        │  │ │ │
+│  │  │  └──────────────────────────────────────────────────────────┘  │ │ │
+│  │  │                                                                 │ │ │
+│  │  │  ┌──────────────────────────────────────────────────────────┐  │ │ │
+│  │  │  │  Jumphost (t2.small)                                    │  │ │ │
+│  │  │  │  • Public IP                                            │  │ │ │
+│  │  │  │  • SSM Session Manager ✓                               │  │ │ │
+│  │  │  │  • SSH: Disabled (optional)                            │  │ │ │
+│  │  │  │  SG: kmea-dev-jumphost-sg                              │  │ │ │
+│  │  │  └──────────────────────────────────────────────────────────┘  │ │ │
+│  │  │                                                                 │ │ │
+│  │  └──────────────────────────────────────────────────────────────────┘ │ │
+│  │                                 ↓                                       │ │
+│  │  ┌──────────────────────────────────────────────────────────────────┐ │ │
+│  │  │  NAT Gateway (single, shared across AZs)                        │ │ │
+│  │  └──────────────────────────────────────────────────────────────────┘ │ │
+│  │                                 ↓                                       │ │
+│  │  ┌──────────────────────────────────────────────────────────────────┐ │ │
+│  │  │  PRIVATE SUBNETS (10.0.32.0/20 + 10.0.48.0/20)                 │ │ │
+│  │  │                                                                 │ │ │
+│  │  │  ┌──────────────────────────┐  ┌──────────────────────────┐  │ │ │
+│  │  │  │  Internal ALB            │  │  Internal ALB            │  │ │ │
+│  │  │  │  • HTTP:80               │  │  • HTTP:80               │  │ │ │
+│  │  │  │  • VPC Link target       │  │  • VPC Link target       │  │ │ │
+│  │  │  │  • Port: 3000-8007      │  │  • Port: 3000-8007      │  │ │ │
+│  │  │  │  SG: kmea-dev-alb-sg    │  │  SG: kmea-dev-alb-sg    │  │ │ │
+│  │  │  └──────────────────────────┘  └──────────────────────────┘  │ │ │
+│  │  │            ↓                          ↓                        │ │ │
+│  │  │  ┌──────────────────────────────────────────────────────────┐ │ │ │
+│  │  │  │        EKS Cluster (1.29) - Private API               │ │ │ │
+│  │  │  │                                                        │ │ │ │
+│  │  │  │  ┌─────────────────────┐  ┌─────────────────────┐    │ │ │ │
+│  │  │  │  │  Node Group 1       │  │  Node Group 2       │    │ │ │ │
+│  │  │  │  │  t3.medium          │  │  t3.medium          │    │ │ │ │
+│  │  │  │  │  ┌────────────────┐ │  │  ┌────────────────┐ │    │ │ │ │
+│  │  │  │  │  │ EKS Pod #1     │ │  │  │ EKS Pod #2     │ │    │ │ │ │
+│  │  │  │  │  │ :3000-8007     │ │  │  │ :3000-8007     │ │    │ │ │ │
+│  │  │  │  │  └────────────────┘ │  │  └────────────────┘ │    │ │ │ │
+│  │  │  │  └─────────────────────┘  └─────────────────────┘    │ │ │ │
+│  │  │  │         SG: EKS Nodes (managed)                       │ │ │ │
+│  │  │  │         • Inbound: 3000-8007 from alb-sg             │ │ │ │
+│  │  │  │         • Inbound: 443 from jumphost-sg              │ │ │ │
+│  │  │  │         • OIDC + IRSA Enabled                        │ │ │ │
+│  │  │  └──────────────────────────────────────────────────────┘ │ │ │
+│  │  │            ↓                                               │ │ │
+│  │  │  ┌──────────────────────────────────────────────────────┐ │ │ │
+│  │  │  │  RDS PostgreSQL (db.t3.medium)                       │ │ │ │
+│  │  │  │  • Engine: 16.3                                      │ │ │ │
+│  │  │  │  • Storage: 50 GB                                    │ │ │ │
+│  │  │  │  • Single-AZ (dev only)                              │ │ │ │
+│  │  │  │  • Database: kmeadb                                  │ │ │ │
+│  │  │  │  • Admin: kmeaadmin                                  │ │ │ │
+│  │  │  │  • Password: Secrets Manager (auto)                 │ │ │ │
+│  │  │  │  SG: kmea-dev-rds-sg                                │ │ │ │
+│  │  │  │  • Inbound: 5432 from node SG + jumphost SG ONLY    │ │ │ │
+│  │  │  └──────────────────────────────────────────────────────┘ │ │ │
+│  │  │                                                             │ │ │
+│  │  └──────────────────────────────────────────────────────────────┘ │ │
+│  │                                                                  │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │  STORAGE & CDN (S3 + CloudFront)                                   │ │
+│  │                                                                    │ │
+│  │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐         │ │
+│  │  │ S3 Bucket 1  │    │ S3 Bucket 2  │    │ S3 Bucket 3  │         │ │
+│  │  │ doc-library  │    │main-dashboard│    │    eco       │         │ │
+│  │  │ (private)    │    │ (private)    │    │ (private)    │         │ │
+│  │  └──────────────┘    └──────────────┘    └──────────────┘         │ │
+│  │        ↓                   ↓                   ↓                   │ │
+│  │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐         │ │
+│  │  │ CloudFront   │    │ CloudFront   │    │ CloudFront   │         │ │
+│  │  │ PriceClass   │    │ PriceClass   │    │ PriceClass   │         │ │
+│  │  │    _All      │    │    _200      │    │    _200      │         │ │
+│  │  │ (global)     │    │   (188 SGs)  │    │   (188 SGs)  │         │ │
+│  │  │ +OAC         │    │   +OAC       │    │   +OAC       │         │ │
+│  │  │ +SPA Routing │    │ +SPA Routing │    │ +SPA Routing │         │ │
+│  │  └──────────────┘    └──────────────┘    └──────────────┘         │ │
+│  │        ↓                   ↓                   ↓                   │ │
+│  │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐         │ │
+│  │  │  Global CDN  │    │  Global CDN  │    │  Global CDN  │         │ │
+│  │  │  Endpoints   │    │  Endpoints   │    │  Endpoints   │         │ │
+│  │  │  404/403→    │    │  404/403→    │    │  404/403→    │         │ │
+│  │  │ /index.html  │    │ /index.html  │    │ /index.html  │         │ │
+│  │  └──────────────┘    └──────────────┘    └──────────────┘         │ │
+│  │                                                                    │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────────┐ │
+│  │  REMOTE STATE BACKEND (S3 + DynamoDB)                              │ │
+│  │                                                                    │ │
+│  │  ┌──────────────┐         ┌──────────────┐                        │ │
+│  │  │ S3 Bucket    │         │ DynamoDB     │                        │ │
+│  │  │kmea-dev-     │ ←→      │ Table:       │                        │ │
+│  │  │tfstate-      │ Locking │ kmea-dev-    │                        │ │
+│  │  │ap-south-1   │         │ tflock       │                        │ │
+│  │  │ (versioned)  │         │              │                        │ │
+│  │  │ (encrypted)  │         │              │                        │ │
+│  │  └──────────────┘         └──────────────┘                        │ │
+│  │                                                                    │ │
+│  └────────────────────────────────────────────────────────────────────┘ │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  EXTERNAL / NOT YET CREATED (Manual Setup Required)                         │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐ │
+│  │  API Gateway (REST API)                                               │ │
+│  │  • Created manually in AWS Console                                    │ │
+│  │  • Connected to Internal ALB via VPC Link                            │ │
+│  │  • External HTTPS endpoint                                           │ │
+│  │                                                                        │ │
+│  │  Flow: External API Client → API Gateway → VPC Link → ALB → EKS     │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+TRAFFIC FLOW EXAMPLES
+════════════════════════════════════════════════════════════════════════════════
+
+1. EXTERNAL API REQUEST:
+   Client → API Gateway (HTTPS) → VPC Link → ALB (80) → EKS Pods (3000-8007)
+
+2. BACKEND TO DATABASE:
+   EKS Pods → RDS PostgreSQL (:5432)
+   [Allowed via security group: EKS node SG → RDS SG]
+
+3. JUMPHOST TO KUBERNETES:
+   Jumphost → EKS API (:443)
+   [Allowed via security group: jumphost-sg → eks-cluster-sg]
+
+4. JUMPHOST TO DATABASE:
+   Jumphost → RDS PostgreSQL (:5432)
+   [Allowed via security group: jumphost-sg → rds-sg]
+
+5. STATIC SITE REQUESTS:
+   Client → CloudFront → S3 Bucket (private, via OAC)
+   [404/403 errors redirect to /index.html for SPA routing]
+
+
+SECURITY GROUPS SUMMARY
+════════════════════════════════════════════════════════════════════════════════
+
+┌─────────────────────┬──────────────────────────────────┬───────────────────┐
+│ Security Group      │ Inbound Rules                    │ Source/Dest       │
+├─────────────────────┼──────────────────────────────────┼───────────────────┤
+│ alb-sg              │ :80, :443                        │ VPC CIDR           │
+│                     │                                  │ (10.0.0.0/16)     │
+├─────────────────────┼──────────────────────────────────┼───────────────────┤
+│ eks-node-sg         │ :3000-8007                       │ alb-sg             │
+│ (EKS-managed)       │ :443                             │ jumphost-sg        │
+├─────────────────────┼──────────────────────────────────┼───────────────────┤
+│ eks-cluster-sg      │ :443                             │ jumphost-sg        │
+├─────────────────────┼──────────────────────────────────┼───────────────────┤
+│ rds-sg              │ :5432 (PostgreSQL)               │ eks-node-sg        │
+│                     │                                  │ jumphost-sg        │
+├─────────────────────┼──────────────────────────────────┼───────────────────┤
+│ jumphost-sg         │ :22 (SSH)                        │ jumphost_allowed_  │
+│                     │                                  │ ssh_cidrs (empty)  │
+└─────────────────────┴──────────────────────────────────┴───────────────────┘
+
+Note: All SGs have unrestricted outbound access by default.
+
+
+RESOURCE NAMING CONVENTION
+════════════════════════════════════════════════════════════════════════════════
+
+Prefix: kmea-dev-<component>
+
+Examples:
+  • VPC:                  kmea-dev-vpc
+  • EKS Cluster:          kmea-dev-eks
+  • RDS Instance:         kmea-dev-rds
+  • ALB:                  kmea-dev-alb
+  • Jumphost:             kmea-dev-jumphost
+  • S3 Buckets:           kmea-dev-doc-library, kmea-dev-maindashboard, kmea-dev-eco
+  • CloudFront Dist.:     kmea-dev-cdn-doc-library, kmea-dev-cdn-maindashboard, kmea-dev-cdn-eco
+  • Security Groups:      kmea-dev-alb-sg, kmea-dev-rds-sg, kmea-dev-jumphost-sg
+
+
+INFRASTRUCTURE STATISTICS
+════════════════════════════════════════════════════════════════════════════════
+
+Availability Zones:        2 (ap-south-1a, ap-south-1b)
+VPC CIDR:                  10.0.0.0/16 (/16 = 65,536 IPs)
+  Public Subnets:          2 × /20 = 4,096 IPs each
+  Private Subnets:         2 × /20 = 4,096 IPs each
+
+Compute:
+  EKS Nodes:               2 × t3.medium (1 vCPU, 4GB RAM each)
+  Jumphost:                1 × t2.small (1 vCPU, 2GB RAM)
+
+Database:
+  RDS Instance:            db.t3.medium (2 vCPU, 4GB RAM)
+  Storage:                 50 GB
+  Type:                    PostgreSQL 16.3
+
+Storage:
+  S3 Buckets:              3
+  CloudFront CDNs:         3
+  Total Global Coverage:   188-391 edge locations (mix of PriceClass_All + _200)
+
+Network:
+  NAT Gateways:            1 (shared across AZs)
+  Internet Gateways:       1
+  ALBs:                    1 (internal only)
+  VPC Links:               1 (manual, for API Gateway)
+
+
+DEPLOYMENT CHECKLIST
+════════════════════════════════════════════════════════════════════════════════
+
+Pre-Deployment:
+  ☐ AWS CLI configured for ap-south-1
+  ☐ IAM permissions verified
+  ☐ AMI ID verified: ami-058b5cd80b3062918
+  ☐ Review terraform.tfvars for any customizations needed
+
+Bootstrap Phase:
+  ☐ cd bootstrap && terraform init
+  ☐ terraform apply (creates S3 + DynamoDB backend)
+  ☐ Verify S3 bucket and DynamoDB table created
+
+Dev Deployment:
+  ☐ cd ../environments/dev && terraform init
+  ☐ terraform plan -var-file=terraform.tfvars (review changes)
+  ☐ terraform apply -var-file=terraform.tfvars (create infrastructure)
+  ☐ Wait 15-25 minutes for resources to be fully provisioned
+
+Post-Deployment:
+  ☐ Verify all resources in AWS Console
+  ☐ Test EKS access from jumphost
+  ☐ Test RDS connectivity
+  ☐ Configure EC2 key pair for SSH (optional)
+  ☐ Create API Gateway + VPC Link (manual)
+  ☐ Update ALB security group for API Gateway traffic
+  ☐ Deploy applications to EKS
+  ☐ Configure CloudFront cache behaviors as needed
+
+
+═══════════════════════════════════════════════════════════════════════════════
+Generated: 2026-06-10
+Status: ✅ Infrastructure Ready for Deployment
+═══════════════════════════════════════════════════════════════════════════════
