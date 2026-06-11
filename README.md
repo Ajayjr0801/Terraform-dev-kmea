@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Kema Infrastructure (Terraform)
 
 Module-based Terraform for the Kema platform on AWS (`ap-south-1`), with a
@@ -71,3 +72,6 @@ terraform/
 └── modules/
     └── vpc/ eks/ rds/ alb/ s3/ cloudfront/
 ```
+=======
+# Terraform-dev-kmea
+>>>>>>> 0fe2eca24bc82b2bc21ab803973a2eba76fd7072
